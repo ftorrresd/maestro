@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanoaod-skim"
+version = "0.1.0"
+description = "CMS NanoAOD skimming with uproot and awkward"
+requires-python = ">=3.9"
+dependencies = [
+  "uproot==5.6.9",
+  "awkward==2.8.12",
+  "numpy==2.0.2",
+  "pydantic==2.12.5",
+]
+
+[project.scripts]
+nanoaod-skim = "nanoaod_skim.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

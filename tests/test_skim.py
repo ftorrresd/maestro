@@ -219,6 +219,30 @@ def test_all_missing_triggers_default_to_false(tmp_path: Path) -> None:
         assert arrays["HLT_Missing2"].dtype == np.bool_
 
 
+def test_missing_non_trigger_keep_branch_is_dropped(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    _make_input_file(input_path)
+
+    config = _base_config()
+    config["keep_branches"] = ["event", "Branch_DoesNotExist"]
+
+    report = skim_file(
+        input_path=input_path,
+        config=config,
+        output_path=output_path,
+    )
+
+    assert "event" in report["kept_branches"]
+    assert "Branch_DoesNotExist" not in report["kept_branches"]
+
+    with uproot.open(output_path) as fin:
+        tree = fin["Events"]
+        keys = tree.keys()
+        assert "event" in keys
+        assert "Branch_DoesNotExist" not in keys
+
+
 def test_main_writes_report_json(tmp_path: Path) -> None:
     input_path = tmp_path / "input.root"
     output_path = tmp_path / "skim.root"
