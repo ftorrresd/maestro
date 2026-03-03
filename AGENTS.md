@@ -93,18 +93,18 @@ No package build step exists; use checks below as the quality gate.
 
 ## Runtime Usage
 
-CLI uses one positional argument: `config_source`.
+CLI uses Typer with subcommands; current command is `skim`.
 
 - File config:
 
 ```bash
-.venv/bin/python skim.py config_example.json
+maestro skim config_example.json
 ```
 
 - Inline JSON config:
 
 ```bash
-.venv/bin/python skim.py '{"input":"/path/to/in.root","output":"skim.root","triggers":[],"object_requirements":{},"keep_branches":[]}'
+maestro skim '{"input":"/path/to/in.root","output":"skim.root","sample_metadata":{"k_factor":1.0},"triggers":[],"object_requirements":{},"keep_branches":[]}'
 ```
 
 - Programmatic usage (preferred in Python code):

@@ -1,1 +1,1 @@
-python skim.py config_example.json
+maestro skim config_example.json

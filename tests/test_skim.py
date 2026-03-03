@@ -281,7 +281,7 @@ def test_main_writes_report_json(tmp_path: Path) -> None:
     config["step_size"] = 2
     config_path.write_text(json.dumps(config), encoding="utf-8")
 
-    main([str(config_path)])
+    main(["skim", str(config_path)])
 
     report_path = tmp_path / "skim.root.report.json"
     assert report_path.exists()
@@ -300,7 +300,7 @@ def test_main_accepts_inline_json_config(tmp_path: Path) -> None:
     config["output"] = str(output_path)
     config["step_size"] = 2
 
-    main([json.dumps(config)])
+    main(["skim", json.dumps(config)])
 
     report_path = tmp_path / "skim_inline.root.report.json"
     assert report_path.exists()
@@ -325,7 +325,7 @@ def test_run_from_config_without_file(tmp_path: Path) -> None:
 
 def test_main_rejects_invalid_config_source() -> None:
     try:
-        main(["{not valid json"])
+        main(["skim", "{not valid json"])
     except ValueError as exc:
         assert "neither an existing file path nor valid JSON" in str(exc)
     else:

@@ -1,4 +1,4 @@
-# NanoAOD uproot+awkward skimmer
+# Maestro
 
 Maestro is an orchestrator for common CMS NanoAOD analysis workflows.
 It includes a Python skimmer implementation using `uproot` and `awkward`.
@@ -35,14 +35,37 @@ choices, validation, and final review.
 
 ## Install
 
+Create a local virtual environment and install runtime dependencies:
+
 ```bash
-python -m pip install uproot awkward numpy pydantic
+bash scripts/install.sh
+```
+
+Install Maestro in editable mode to expose the `maestro` CLI command:
+
+```bash
+.venv/bin/python -m pip install -e .
+```
+
+Install dev dependencies (tests, mypy, ruff):
+
+```bash
+bash scripts/install.sh --dev
+```
+
+Manual equivalent:
+
+```bash
+python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -e .
 ```
 
 ## Run
 
+`maestro` uses Typer subcommands. Current command: `skim`.
+
 ```bash
-python skim.py config_example.json
+maestro skim config_example.json
 ```
 
 CLI arguments:
@@ -54,13 +77,13 @@ CLI arguments:
 Inline JSON example:
 
 ```bash
-python skim.py '{"input":"/path/to/input.root","output":"skim.root","triggers":[],"object_requirements":{},"keep_branches":[]}'
+maestro skim '{"input":"/path/to/input.root","output":"skim.root","sample_metadata":{"k_factor":1.0},"triggers":[],"object_requirements":{},"keep_branches":[]}'
 ```
 
 Programmatic (no config file) example:
 
 ```python
-from skim import run_from_config
+from maestro import run_from_config
 
 report = run_from_config(
     {
@@ -71,12 +94,6 @@ report = run_from_config(
         "keep_branches": [],
     }
 )
-```
-
-Package-style programmatic import:
-
-```python
-from maestro import run_from_config
 ```
 
 ## Config notes
@@ -101,7 +118,7 @@ pytest -q
 ```
 
 ```bash
-mypy --strict skim.py tests/test_skim.py
+mypy --strict skim.py src/maestro/*.py src/maestro/runners/*.py scripts/*.py tests/test_skim.py
 ```
 
 ## Distributed execution scaffolding

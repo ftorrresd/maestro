@@ -1,32 +1,25 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 from typing import Any, Optional, Sequence, cast
+
+import typer
 
 from .config import load_config_source
 from .skimmer import run_from_config
 
-
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Skim CMS NanoAOD events from a config file path or inline JSON string."
-        )
-    )
-    parser.add_argument(
-        "config_source",
-        help="Config file path or inline JSON string",
-    )
-    return parser.parse_args(argv)
+app = typer.Typer(
+    help="Maestro CLI for CMS NanoAOD workflows.",
+    no_args_is_help=True,
+)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
-    args = parse_args(argv)
-    config = load_config_source(args.config_source)
-    output_path = Path(config.output)
-    report = run_from_config(config)
+@app.callback()
+def app_callback() -> None:
+    """Maestro command group."""
 
+
+def _print_run_summary(report: dict[str, Any], *, output_path: Path) -> None:
     processed = cast(dict[str, Any], report["processed_event_range"])
     n_scanned = int(processed["n_scanned"])
     n_selected = int(processed["n_selected"])
@@ -42,3 +35,22 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             efficiency,
         )
     )
+
+
+@app.command("skim")
+def skim_command(
+    config_source: str = typer.Argument(
+        ...,
+        help="Config file path or inline JSON string",
+    ),
+) -> None:
+    """Run event skimming from a config source."""
+    config = load_config_source(config_source)
+    output_path = Path(config.output)
+    report = run_from_config(config)
+    _print_run_summary(report, output_path=output_path)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    args = list(argv) if argv is not None else None
+    app(args=args, prog_name="maestro", standalone_mode=False)

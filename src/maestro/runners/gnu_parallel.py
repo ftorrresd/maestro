@@ -8,5 +8,5 @@ def render_parallel_tasks(configs: list[Mapping[str, Any]]) -> str:
     lines = []
     for config in configs:
         payload = json.dumps(dict(config), separators=(",", ":"))
-        lines.append(f"python skim.py '{payload}'")
+        lines.append(f"maestro skim '{payload}'")
     return "\n".join(lines)
