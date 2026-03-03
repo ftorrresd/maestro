@@ -8,9 +8,9 @@ _SRC_PATH = Path(__file__).resolve().parent / "src"
 if str(_SRC_PATH) not in sys.path:
     sys.path.insert(0, str(_SRC_PATH))
 
-from nanoaod_skim.cli import main
-from nanoaod_skim.config import SkimConfig, load_config as _load_config
-from nanoaod_skim.skimmer import run_from_config, skim_file
+from maestro.cli import main
+from maestro.config import SkimConfig, load_config as _load_config
+from maestro.skimmer import run_from_config, skim_file
 
 __all__ = [
     "SkimConfig",

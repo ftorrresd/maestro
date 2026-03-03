@@ -1,13 +1,20 @@
 # NanoAOD uproot+awkward skimmer
 
-Small Python skimmer for CMS NanoAOD using `uproot` and `awkward`.
+Maestro is an orchestrator for common CMS NanoAOD analysis workflows.
+It includes a Python skimmer implementation using `uproot` and `awkward`.
+This tool was built with support from AI coding agents.
+
+## Acknowledgments
+
+Development used AI-assisted coding workflows with human oversight for design
+choices, validation, and final review.
 
 ## Project layout
 
-- `src/nanoaod_skim/config.py`: config schema and loaders
-- `src/nanoaod_skim/skimmer.py`: core skimming engine
-- `src/nanoaod_skim/cli.py`: CLI wiring
-- `src/nanoaod_skim/runners/`: local/parallel/condor scaffolding helpers
+- `src/maestro/config.py`: config schema and loaders
+- `src/maestro/skimmer.py`: core skimming engine
+- `src/maestro/cli.py`: CLI wiring
+- `src/maestro/runners/`: local/parallel/condor scaffolding helpers
 - `scripts/`: operational helper scripts (`make_tasks.py`, `merge_outputs.py`)
 - `workflows/`: execution templates for GNU Parallel and HTCondor
 
@@ -69,13 +76,14 @@ report = run_from_config(
 Package-style programmatic import:
 
 ```python
-from nanoaod_skim import run_from_config
+from maestro import run_from_config
 ```
 
 ## Config notes
 
 - `n_events = -1` means process all events after `offset`.
 - `input` and `output` are required in the config.
+- `sample_metadata.k_factor` is required and must be > 0.
 - `tree` defaults to `Events` and `step_size` defaults to `100 MB`.
 - Missing trigger/object branches are reported in the JSON report.
 - Missing trigger branches are treated as always `False` in the trigger OR.

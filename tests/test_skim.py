@@ -44,7 +44,11 @@ def _base_config() -> dict[str, Any]:
         "output": "dummy_output.root",
         "tree": "Events",
         "step_size": "100 MB",
-        "sample_metadata": {"sample_name": "TestSample", "xsec_pb": 1.23},
+        "sample_metadata": {
+            "sample_name": "TestSample",
+            "xsec_pb": 1.23,
+            "k_factor": 1.0,
+        },
         "n_events": -1,
         "offset": 0,
         "triggers": ["HLT_IsoMu24", "HLT_Ele32_WPTight_Gsf"],
@@ -68,6 +72,7 @@ def test_load_config_defaults(tmp_path: Path) -> None:
             {
                 "input": "input.root",
                 "output": "output.root",
+                "sample_metadata": {"k_factor": 1.0},
             }
         ),
         encoding="utf-8",
@@ -80,6 +85,7 @@ def test_load_config_defaults(tmp_path: Path) -> None:
     assert config.offset == 0
     assert config.tree == "Events"
     assert config.step_size == "100 MB"
+    assert config.sample_metadata.k_factor == 1.0
     assert config.triggers == []
     assert config.object_requirements == {}
     assert config.keep_branches == []
@@ -108,6 +114,27 @@ def test_load_config_requires_input_output(tmp_path: Path) -> None:
         assert "output" in str(exc)
     else:
         raise AssertionError("Expected ValueError for missing required fields")
+
+
+def test_load_config_requires_k_factor(tmp_path: Path) -> None:
+    config_path = tmp_path / "bad_missing_k_factor.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "input": "input.root",
+                "output": "output.root",
+                "sample_metadata": {"xsec_pb": 1.23},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        _load_config(config_path)
+    except ValueError as exc:
+        assert "k_factor" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for missing k_factor")
 
 
 def test_skim_file_selection_and_cutflow(tmp_path: Path) -> None:

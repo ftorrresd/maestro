@@ -7,7 +7,7 @@ Operating guide for agentic coding tools in this repository.
 - Language: Python
 - Domain: CMS NanoAOD skimming with `uproot` + `awkward`
 - Compatibility entrypoint: `skim.py`
-- Package source: `src/nanoaod_skim/`
+- Package source: `src/maestro/`
 - Tests: `tests/test_skim.py`
 - Example config: `config_example.json`
 - Workflow templates: `workflows/gnu_parallel/`, `workflows/htcondor/`
@@ -46,7 +46,7 @@ No package build step exists; use checks below as the quality gate.
 ### Syntax check
 
 ```bash
-.venv/bin/python -m py_compile skim.py src/nanoaod_skim/*.py src/nanoaod_skim/runners/*.py scripts/*.py tests/test_skim.py
+.venv/bin/python -m py_compile skim.py src/maestro/*.py src/maestro/runners/*.py scripts/*.py tests/test_skim.py
 ```
 
 ### Lint
@@ -64,7 +64,7 @@ No package build step exists; use checks below as the quality gate.
 ### Type check (strict)
 
 ```bash
-.venv/bin/mypy --strict skim.py src/nanoaod_skim/*.py src/nanoaod_skim/runners/*.py scripts/*.py tests/test_skim.py
+.venv/bin/mypy --strict skim.py src/maestro/*.py src/maestro/runners/*.py scripts/*.py tests/test_skim.py
 ```
 
 ### Run full test suite
@@ -110,7 +110,7 @@ CLI uses one positional argument: `config_source`.
 - Programmatic usage (preferred in Python code):
 
 ```python
-from nanoaod_skim import run_from_config
+from maestro import run_from_config
 
 report = run_from_config({...})
 ```
@@ -143,7 +143,7 @@ condor_submit workflows/htcondor/submit.sub
 
 ## Code Style Guidelines
 
-Follow established patterns in `src/nanoaod_skim/` and existing tests.
+Follow established patterns in `src/maestro/` and existing tests.
 
 ### Imports
 

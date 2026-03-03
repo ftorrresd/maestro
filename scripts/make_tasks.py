@@ -11,7 +11,7 @@ _SRC = _ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from nanoaod_skim.runners.gnu_parallel import render_parallel_tasks
+from maestro.runners.gnu_parallel import render_parallel_tasks
 
 
 def parse_args() -> argparse.Namespace:

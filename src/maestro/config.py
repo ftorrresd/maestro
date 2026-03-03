@@ -9,6 +9,19 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 StepSize = Union[str, int]
 
 
+class SampleMetadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    k_factor: float
+
+    @field_validator("k_factor")
+    @classmethod
+    def _validate_k_factor(cls, value: float) -> float:
+        if value <= 0.0:
+            raise ValueError("'sample_metadata.k_factor' must be > 0.")
+        return value
+
+
 class SkimConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -16,7 +29,7 @@ class SkimConfig(BaseModel):
     output: str
     tree: str = "Events"
     step_size: StepSize = "100 MB"
-    sample_metadata: dict[str, Any] = Field(default_factory=dict)
+    sample_metadata: SampleMetadata
     n_events: int = -1
     offset: int = 0
     triggers: list[str] = Field(default_factory=list)

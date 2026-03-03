@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nanoaod-skim"
+name = "maestro"
 version = "0.1.0"
 description = "CMS NanoAOD skimming with uproot and awkward"
 requires-python = ">=3.9"
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-nanoaod-skim = "nanoaod_skim.cli:main"
+maestro = "maestro.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -198,7 +198,7 @@ def skim_file(
         output_file=str(output_path),
         tree=tree_name,
         input_config=validated.model_dump(),
-        sample_metadata=validated.sample_metadata,
+        sample_metadata=validated.sample_metadata.model_dump(),
         offset=validated.offset,
         n_events=validated.n_events,
         entry_start=entry_start,

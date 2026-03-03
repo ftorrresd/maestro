@@ -7,6 +7,7 @@
     "sample_name": "DYJetsToLL_M-50",
     "era": "Run3Summer22",
     "xsec_pb": 6471.0,
+    "k_factor": 1.0,
     "campaign": "NanoAODv12"
   },
   "n_events": 200000,
