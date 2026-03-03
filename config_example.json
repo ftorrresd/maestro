@@ -1,0 +1,39 @@
+{
+  "input": "/path/to/input.root",
+  "output": "skim.root",
+  "tree": "Events",
+  "step_size": "100 MB",
+  "sample_metadata": {
+    "sample_name": "DYJetsToLL_M-50",
+    "era": "Run3Summer22",
+    "xsec_pb": 6471.0,
+    "campaign": "NanoAODv12"
+  },
+  "n_events": 200000,
+  "offset": 0,
+  "triggers": [
+    "HLT_IsoMu24",
+    "HLT_Ele32_WPTight_Gsf"
+  ],
+  "object_requirements": {
+    "nMuon": 1,
+    "nJet": 2
+  },
+  "keep_branches": [
+    "run",
+    "luminosityBlock",
+    "event",
+    "PV_npvs",
+    "nMuon",
+    "nElectron",
+    "nJet",
+    "Muon_pt",
+    "Muon_eta",
+    "Electron_pt",
+    "Electron_eta",
+    "Jet_pt",
+    "Jet_eta",
+    "HLT_IsoMu24",
+    "HLT_Ele32_WPTight_Gsf"
+  ]
+}
