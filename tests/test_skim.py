@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 from typing import Any
+from unittest.mock import patch
 
 import awkward as ak
 import numpy as np
@@ -179,11 +180,13 @@ def test_load_config_accepts_multiple_event_weight_corrections(tmp_path: Path) -
     config = _base_config()
     config["event_weight_corrections"] = [
         {
+            "input_branches": ["genWeight"],
             "weight_branch": "genWeight",
             "suffix": "_sfA",
             "variations": ["nominal", "varA"],
         },
         {
+            "input_branches": ["genWeight"],
             "weight_branch": "genWeight",
             "suffix": "_sfB",
             "variations": ["nominal", "varB"],
@@ -336,17 +339,20 @@ def test_corrections_append_pt_mass_and_event_weight_variations(tmp_path: Path) 
     config = _base_config()
     config["energy_corrections"] = [
         {
-            "pt_branch": "Muon_pt",
-            "mass_branch": "Muon_mass",
+            "input_branches": ["Muon_pt", "Muon_mass"],
+            "corrected_branches": ["Muon_pt", "Muon_mass"],
             "suffix": "_calib",
             "variations": ["nominal", "jerA", "jerB"],
         }
     ]
-    config["event_weight_correction"] = {
-        "weight_branch": "genWeight",
-        "suffix": "_sf",
-        "variations": ["nominal", "pileupUp"],
-    }
+    config["event_weight_corrections"] = [
+        {
+            "input_branches": ["genWeight"],
+            "weight_branch": "genWeight",
+            "suffix": "_sf",
+            "variations": ["nominal", "pileupUp"],
+        }
+    ]
     config["keep_branches"] = [
         "event",
         "Muon_pt",
@@ -410,7 +416,7 @@ def test_corrections_append_pt_mass_and_event_weight_variations(tmp_path: Path) 
         )
 
     assert report["corrections"]["mock_mode"] is True
-    assert report["corrections"]["event_weight_correction"]["suffix"] == "_sf"
+    assert report["corrections"]["event_weight_corrections"][0]["suffix"] == "_sf"
 
 
 def test_load_config_rejects_empty_correction_variations(tmp_path: Path) -> None:
@@ -418,8 +424,8 @@ def test_load_config_rejects_empty_correction_variations(tmp_path: Path) -> None
     config = _base_config()
     config["energy_corrections"] = [
         {
-            "pt_branch": "Muon_pt",
-            "mass_branch": "Muon_mass",
+            "input_branches": ["Muon_pt", "Muon_mass"],
+            "corrected_branches": ["Muon_pt", "Muon_mass"],
             "suffix": "_calib",
             "variations": [],
         }
@@ -434,6 +440,30 @@ def test_load_config_rejects_empty_correction_variations(tmp_path: Path) -> None
         raise AssertionError("Expected ValueError for empty correction variations")
 
 
+def test_load_config_rejects_corrected_branches_not_in_inputs(tmp_path: Path) -> None:
+    config_path = tmp_path / "bad_corrected_branches.json"
+    config = _base_config()
+    config["energy_corrections"] = [
+        {
+            "input_branches": ["Muon_pt", "Muon_eta"],
+            "corrected_branches": ["Muon_pt", "Muon_mass"],
+            "suffix": "_calib",
+            "variations": ["nominal"],
+        }
+    ]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    try:
+        _load_config(config_path)
+    except ValueError as exc:
+        assert "corrected_branches" in str(exc)
+        assert "Muon_mass" in str(exc)
+    else:
+        raise AssertionError(
+            "Expected ValueError when corrected_branches are not in input_branches"
+        )
+
+
 def test_missing_correction_input_branch_raises_runtime_error(tmp_path: Path) -> None:
     input_path = tmp_path / "input.root"
     output_path = tmp_path / "skim.root"
@@ -442,8 +472,8 @@ def test_missing_correction_input_branch_raises_runtime_error(tmp_path: Path) ->
     config = _base_config()
     config["energy_corrections"] = [
         {
-            "pt_branch": "Muon_pt",
-            "mass_branch": "Muon_mass_missing",
+            "input_branches": ["Muon_pt", "Muon_mass_missing"],
+            "corrected_branches": ["Muon_pt", "Muon_mass_missing"],
             "suffix": "_calib",
             "variations": ["nominal"],
         }
@@ -468,11 +498,14 @@ def test_missing_event_weight_input_branch_raises_runtime_error(tmp_path: Path) 
     _make_input_file(input_path)
 
     config = _base_config()
-    config["event_weight_correction"] = {
-        "weight_branch": "genWeightMissing",
-        "suffix": "_sf",
-        "variations": ["nominal", "altA"],
-    }
+    config["event_weight_corrections"] = [
+        {
+            "input_branches": ["genWeightMissing"],
+            "weight_branch": "genWeightMissing",
+            "suffix": "_sf",
+            "variations": ["nominal", "altA"],
+        }
+    ]
 
     try:
         skim_file(
@@ -528,6 +561,39 @@ def test_correctionlib_files_are_reported(tmp_path: Path) -> None:
     assert report["corrections"]["correctionlib_files"] == [str(cset_path)]
 
 
+def test_correctionlib_files_loaded_once_per_skim_call(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    cset_path = tmp_path / "corr.json"
+    _make_input_file(input_path)
+    _make_correctionlib_file(cset_path)
+
+    config = _base_config()
+    config["step_size"] = 1
+    config["correctionlib_files"] = [str(cset_path)]
+    config["energy_corrections"] = [
+        {
+            "method": "scale_pt_mass",
+            "input_branches": ["Muon_pt", "Muon_mass"],
+            "corrected_branches": ["Muon_pt", "Muon_mass"],
+            "suffix": "_muCalib",
+            "variations": ["nominal", "muVarA"],
+            "correction_file": str(cset_path),
+            "correction_name": "muon_scale",
+        }
+    ]
+
+    with patch("maestro.skimmer.correctionlib.CorrectionSet.from_file") as from_file:
+        from_file.return_value = object()
+        skim_file(
+            input_path=input_path,
+            config=config,
+            output_path=output_path,
+        )
+
+    assert from_file.call_count == 1
+
+
 def test_multiple_corrections_for_different_objects(tmp_path: Path) -> None:
     input_path = tmp_path / "input.root"
     output_path = tmp_path / "skim.root"
@@ -540,43 +606,41 @@ def test_multiple_corrections_for_different_objects(tmp_path: Path) -> None:
     config["energy_corrections"] = [
         {
             "method": "scale_pt_mass",
-            "pt_branch": "Muon_pt",
-            "mass_branch": "Muon_mass",
+            "input_branches": ["Muon_pt", "Muon_mass"],
+            "corrected_branches": ["Muon_pt", "Muon_mass"],
             "suffix": "_muCalib",
             "variations": ["nominal", "muVarA"],
             "correction_file": str(cset_path),
             "correction_name": "muon_scale",
-            "inputs": {"pt": "Muon_pt"},
         },
         {
             "method": "scale_pt_mass",
-            "pt_branch": "Jet_pt",
-            "mass_branch": "Jet_mass",
+            "input_branches": ["Jet_pt", "Jet_mass"],
+            "corrected_branches": ["Jet_pt", "Jet_mass"],
             "suffix": "_jetCalib",
             "variations": ["nominal", "jetVarA"],
             "correction_file": str(cset_path),
             "correction_name": "jet_scale",
-            "inputs": {"pt": "Jet_pt"},
         },
     ]
     config["event_weight_corrections"] = [
         {
             "method": "event_weight_sf",
+            "input_branches": ["genWeight", "PV_npvs"],
             "weight_branch": "genWeight",
             "suffix": "_sfA",
             "variations": ["nominal", "sfVarA"],
             "correction_file": str(cset_path),
             "correction_name": "pu_sf",
-            "inputs": {"nPU": "PV_npvs"},
         },
         {
             "method": "event_weight_sf",
+            "input_branches": ["genWeight", "nJet"],
             "weight_branch": "genWeight",
             "suffix": "_sfB",
             "variations": ["nominal", "sfVarB"],
             "correction_file": str(cset_path),
             "correction_name": "btag_sf",
-            "inputs": {"ht": "nJet"},
         },
     ]
     config["keep_branches"] = [
@@ -614,8 +678,8 @@ def test_unknown_correction_method_raises_runtime_error(tmp_path: Path) -> None:
     config["energy_corrections"] = [
         {
             "method": "unknown_method",
-            "pt_branch": "Muon_pt",
-            "mass_branch": "Muon_mass",
+            "input_branches": ["Muon_pt", "Muon_mass"],
+            "corrected_branches": ["Muon_pt", "Muon_mass"],
             "suffix": "_x",
             "variations": ["nominal"],
         }
@@ -642,8 +706,8 @@ def test_correction_file_not_loaded_raises_runtime_error(tmp_path: Path) -> None
     config["energy_corrections"] = [
         {
             "method": "scale_pt_mass",
-            "pt_branch": "Muon_pt",
-            "mass_branch": "Muon_mass",
+            "input_branches": ["Muon_pt", "Muon_mass"],
+            "corrected_branches": ["Muon_pt", "Muon_mass"],
             "suffix": "_x",
             "variations": ["nominal"],
             "correction_file": "/tmp/not_loaded.json",

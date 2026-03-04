@@ -65,21 +65,28 @@ def _build_corrected_branch_name(
 
 def _apply_energy_correction_mock(
     *,
-    pt: ak.Array,
-    mass: ak.Array,
+    inputs: Mapping[str, ak.Array],
     correction_cfg: EnergyCorrectionConfig,
     variation: str,
     correction_set: Optional[Any],
-) -> tuple[ak.Array, ak.Array]:
+) -> dict[str, ak.Array]:
     _ = correction_cfg
     _ = variation
     _ = correction_set
-    return pt, mass
+    corrected: dict[str, ak.Array] = {}
+    for branch in correction_cfg.corrected_branches:
+        if branch not in inputs:
+            raise RuntimeError(
+                "Corrected branch is missing from correction inputs: "
+                f"{branch}. Add it to 'input_branches'."
+            )
+        corrected[branch] = inputs[branch]
+    return corrected
 
 
 def _apply_event_weight_scale_factor_mock(
     *,
-    weight: ak.Array,
+    inputs: Mapping[str, ak.Array],
     correction_cfg: EventWeightCorrectionConfig,
     variation: str,
     correction_set: Optional[Any],
@@ -87,7 +94,7 @@ def _apply_event_weight_scale_factor_mock(
     _ = correction_cfg
     _ = variation
     _ = correction_set
-    return weight
+    return inputs[correction_cfg.weight_branch]
 
 
 ENERGY_CORRECTION_METHODS = {
@@ -138,23 +145,19 @@ def _require_correction_inputs(
     event_weight_corrections: list[EventWeightCorrectionConfig],
 ) -> None:
     for correction in energy_corrections:
-        if correction.pt_branch not in all_branches:
-            raise RuntimeError(
-                "Missing correction input branch: "
-                f"{correction.pt_branch} (energy correction pt_branch)"
-            )
-        if correction.mass_branch not in all_branches:
-            raise RuntimeError(
-                "Missing correction input branch: "
-                f"{correction.mass_branch} (energy correction mass_branch)"
-            )
+        for branch in correction.input_branches:
+            if branch not in all_branches:
+                raise RuntimeError(
+                    "Missing correction input branch: "
+                    f"{branch} (energy correction input_branches)"
+                )
     for event_weight_correction in event_weight_corrections:
-        if event_weight_correction.weight_branch not in all_branches:
-            raise RuntimeError(
-                "Missing correction input branch: "
-                f"{event_weight_correction.weight_branch} "
-                "(event_weight_correction.weight_branch)"
-            )
+        for branch in event_weight_correction.input_branches:
+            if branch not in all_branches:
+                raise RuntimeError(
+                    "Missing correction input branch: "
+                    f"{branch} (event_weight_correction.input_branches)"
+                )
 
 
 def skim_file(
@@ -187,8 +190,6 @@ def skim_file(
         all_branches = set(tree.keys())
         energy_corrections = list(validated.energy_corrections)
         event_weight_corrections = list(validated.event_weight_corrections)
-        if validated.event_weight_correction is not None:
-            event_weight_corrections.append(validated.event_weight_correction)
         _require_correction_inputs(
             all_branches=all_branches,
             energy_corrections=energy_corrections,
@@ -220,10 +221,9 @@ def skim_file(
         filter_branches.update(active_triggers)
         filter_branches.update(active_object_branches)
         for correction in energy_corrections:
-            filter_branches.add(correction.pt_branch)
-            filter_branches.add(correction.mass_branch)
+            filter_branches.update(correction.input_branches)
         for event_weight_correction in event_weight_corrections:
-            filter_branches.add(event_weight_correction.weight_branch)
+            filter_branches.update(event_weight_correction.input_branches)
 
         selected_chunks: list[dict[str, ak.Array]] = []
         empty_template: Optional[dict[str, ak.Array]] = None
@@ -308,30 +308,31 @@ def skim_file(
                     correction_file=correction.correction_file,
                     correctionlib_sets=correctionlib_sets,
                 )
+                correction_inputs = {
+                    branch: arrays[branch][cumulative_mask]
+                    for branch in correction.input_branches
+                }
                 for variation in correction.variations:
-                    corrected_pt, corrected_mass = energy_handler(
-                        pt=arrays[correction.pt_branch][cumulative_mask],
-                        mass=arrays[correction.mass_branch][cumulative_mask],
+                    corrected_values = energy_handler(
+                        inputs=correction_inputs,
                         correction_cfg=correction,
                         variation=variation,
                         correction_set=correction_set,
                     )
-                    pt_name = _build_corrected_branch_name(
-                        base_branch=correction.pt_branch,
-                        suffix=correction.suffix,
-                        variation=variation,
-                    )
-                    mass_name = _build_corrected_branch_name(
-                        base_branch=correction.mass_branch,
-                        suffix=correction.suffix,
-                        variation=variation,
-                    )
-                    chunk_selected[pt_name] = corrected_pt
-                    chunk_selected[mass_name] = corrected_mass
-                    if pt_name not in corrected_output_branches:
-                        corrected_output_branches.append(pt_name)
-                    if mass_name not in corrected_output_branches:
-                        corrected_output_branches.append(mass_name)
+                    for base_branch in correction.corrected_branches:
+                        if base_branch not in corrected_values:
+                            raise RuntimeError(
+                                "Energy correction output missing corrected branch: "
+                                f"{base_branch}"
+                            )
+                        out_name = _build_corrected_branch_name(
+                            base_branch=base_branch,
+                            suffix=correction.suffix,
+                            variation=variation,
+                        )
+                        chunk_selected[out_name] = corrected_values[base_branch]
+                        if out_name not in corrected_output_branches:
+                            corrected_output_branches.append(out_name)
 
             for event_weight_correction in event_weight_corrections:
                 event_handler = EVENT_WEIGHT_CORRECTION_METHODS.get(
@@ -346,11 +347,13 @@ def skim_file(
                     correction_file=event_weight_correction.correction_file,
                     correctionlib_sets=correctionlib_sets,
                 )
+                correction_inputs = {
+                    branch: arrays[branch][cumulative_mask]
+                    for branch in event_weight_correction.input_branches
+                }
                 for variation in event_weight_correction.variations:
                     corrected_weight = event_handler(
-                        weight=arrays[event_weight_correction.weight_branch][
-                            cumulative_mask
-                        ],
+                        inputs=correction_inputs,
                         correction_cfg=event_weight_correction,
                         variation=variation,
                         correction_set=correction_set,
@@ -406,11 +409,6 @@ def skim_file(
         kept_branches=keep_branches,
         corrections={
             "energy_corrections": [item.model_dump() for item in energy_corrections],
-            "event_weight_correction": (
-                event_weight_corrections[0].model_dump()
-                if len(event_weight_corrections) == 1
-                else None
-            ),
             "event_weight_corrections": [
                 item.model_dump() for item in event_weight_corrections
             ],

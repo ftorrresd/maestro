@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 StepSize = Union[str, int]
 
@@ -26,21 +33,32 @@ class EnergyCorrectionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     method: str = "scale_pt_mass"
-    pt_branch: str
-    mass_branch: str
+    input_branches: list[str]
+    corrected_branches: list[str]
     suffix: str = "_corr"
     variations: list[str] = Field(default_factory=lambda: ["nominal"])
     correction_file: Optional[str] = None
     correction_name: Optional[str] = None
-    inputs: dict[str, str] = Field(default_factory=dict)
 
-    @field_validator("method", "pt_branch", "mass_branch", "suffix")
+    @field_validator("method", "suffix")
     @classmethod
     def _validate_non_empty(cls, value: str) -> str:
         stripped = value.strip()
         if not stripped:
             raise ValueError("correction fields must not be empty strings.")
         return stripped
+
+    @field_validator("input_branches", "corrected_branches")
+    @classmethod
+    def _validate_branch_lists(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if not cleaned:
+            raise ValueError(
+                "correction branch lists must contain at least one branch."
+            )
+        if any(not item for item in cleaned):
+            raise ValueError("correction branch entries must not be empty.")
+        return cleaned
 
     @field_validator("correction_file", "correction_name")
     @classmethod
@@ -62,17 +80,31 @@ class EnergyCorrectionConfig(BaseModel):
             raise ValueError("'variations' entries must not be empty.")
         return cleaned
 
+    @model_validator(mode="after")
+    def _validate_corrected_branches_subset(self) -> "EnergyCorrectionConfig":
+        missing = [
+            branch
+            for branch in self.corrected_branches
+            if branch not in self.input_branches
+        ]
+        if missing:
+            raise ValueError(
+                "'corrected_branches' must be a subset of 'input_branches'. "
+                f"Missing from inputs: {missing}"
+            )
+        return self
+
 
 class EventWeightCorrectionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     method: str = "event_weight_sf"
+    input_branches: list[str]
     weight_branch: str
     suffix: str = "_sf"
     variations: list[str] = Field(default_factory=lambda: ["nominal"])
     correction_file: Optional[str] = None
     correction_name: Optional[str] = None
-    inputs: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("method", "weight_branch", "suffix")
     @classmethod
@@ -83,6 +115,16 @@ class EventWeightCorrectionConfig(BaseModel):
                 "event-weight correction fields must not be empty strings."
             )
         return stripped
+
+    @field_validator("input_branches")
+    @classmethod
+    def _validate_input_branches(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if not cleaned:
+            raise ValueError("'input_branches' must contain at least one branch.")
+        if any(not item for item in cleaned):
+            raise ValueError("'input_branches' entries must not be empty.")
+        return cleaned
 
     @field_validator("correction_file", "correction_name")
     @classmethod
@@ -122,7 +164,6 @@ class SkimConfig(BaseModel):
     keep_branches: list[str] = Field(default_factory=list)
     correctionlib_files: list[str] = Field(default_factory=list)
     energy_corrections: list[EnergyCorrectionConfig] = Field(default_factory=list)
-    event_weight_correction: Optional[EventWeightCorrectionConfig] = None
     event_weight_corrections: list[EventWeightCorrectionConfig] = Field(
         default_factory=list
     )
@@ -181,6 +222,20 @@ class SkimConfig(BaseModel):
         if any(not item for item in cleaned):
             raise ValueError("'correctionlib_files' entries must not be empty.")
         return cleaned
+
+    @field_validator("event_weight_corrections")
+    @classmethod
+    def _validate_event_weight_corrections(
+        cls,
+        value: list[EventWeightCorrectionConfig],
+    ) -> list[EventWeightCorrectionConfig]:
+        for item in value:
+            if item.weight_branch not in item.input_branches:
+                raise ValueError(
+                    "'weight_branch' must be included in 'input_branches' for each "
+                    "event_weight_corrections entry."
+                )
+        return value
 
 
 def validate_config_object(raw_config: Any) -> SkimConfig:

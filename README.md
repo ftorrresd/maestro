@@ -103,8 +103,8 @@ report = run_from_config(
 - `sample_metadata.k_factor` is required and must be > 0.
 - `tree` defaults to `Events` and `step_size` defaults to `100 MB`.
 - `correctionlib_files` is an optional list of correctionlib JSON files to load.
-- `energy_corrections` allows mocked object-energy corrections for pT and mass.
-- `event_weight_correction` supports one mocked event-wise scale factor block.
+- `energy_corrections` supports mocked object-energy corrections using configurable
+  input branch lists and corrected output branch lists.
 - `event_weight_corrections` supports multiple event-wise scale factor blocks.
 - Correction output branch names are `<input_branch><suffix>_<variation>`.
 - Variations are user-defined strings (not limited to up/down).
@@ -126,17 +126,20 @@ report = run_from_config(
   "correctionlib_files": ["/path/to/corrections.json"],
   "energy_corrections": [
     {
-      "pt_branch": "Muon_pt",
-      "mass_branch": "Muon_mass",
+      "input_branches": ["Muon_pt", "Muon_mass", "Muon_eta"],
+      "corrected_branches": ["Muon_pt", "Muon_mass"],
       "suffix": "_calib",
       "variations": ["nominal", "jerA", "jerB"]
     }
   ],
-  "event_weight_correction": {
-    "weight_branch": "genWeight",
-    "suffix": "_sf",
-    "variations": ["nominal", "pileupUp"]
-  }
+  "event_weight_corrections": [
+    {
+      "input_branches": ["genWeight", "PV_npvs"],
+      "weight_branch": "genWeight",
+      "suffix": "_sf",
+      "variations": ["nominal", "pileupUp"]
+    }
+  ]
 }
 ```
 
@@ -148,8 +151,8 @@ report = run_from_config(
   "energy_corrections": [
     {
       "method": "scale_pt_mass",
-      "pt_branch": "Muon_pt",
-      "mass_branch": "Muon_mass",
+      "input_branches": ["Muon_pt", "Muon_mass", "Muon_eta"],
+      "corrected_branches": ["Muon_pt", "Muon_mass"],
       "suffix": "_muCalib",
       "variations": ["nominal", "muVarA"],
       "correction_file": "/path/to/corrections.json",
@@ -157,8 +160,8 @@ report = run_from_config(
     },
     {
       "method": "scale_pt_mass",
-      "pt_branch": "Jet_pt",
-      "mass_branch": "Jet_mass",
+      "input_branches": ["Jet_pt", "Jet_mass", "Jet_eta", "rho"],
+      "corrected_branches": ["Jet_pt", "Jet_mass"],
       "suffix": "_jetCalib",
       "variations": ["nominal", "jetVarA"],
       "correction_file": "/path/to/corrections.json",
@@ -168,6 +171,7 @@ report = run_from_config(
   "event_weight_corrections": [
     {
       "method": "event_weight_sf",
+      "input_branches": ["genWeight", "PV_npvs"],
       "weight_branch": "genWeight",
       "suffix": "_sfA",
       "variations": ["nominal", "sfVarA"],
@@ -176,6 +180,7 @@ report = run_from_config(
     },
     {
       "method": "event_weight_sf",
+      "input_branches": ["genWeight", "nJet"],
       "weight_branch": "genWeight",
       "suffix": "_sfB",
       "variations": ["nominal", "sfVarB"],
@@ -206,13 +211,16 @@ Recommended handling for object energy corrections:
 
 Recommended handling for event-wise scale factors:
 
-- Read event-level weight from `event_weight_correction.weight_branch`.
+- Read event-level weight from each
+  `event_weight_corrections[*].weight_branch`.
 - Apply multiplicative scale factors per event for each configured variation.
 - Return one value per selected event, preserving event order.
 
 Runtime contract:
 
 - All configured `correctionlib_files` are loaded at startup.
+- Each configured correctionlib file is read once per `skim_file` execution and
+  reused for all chunk iterations in that run.
 - Missing correction input branches cause immediate failure (`RuntimeError`).
 - Missing correctionlib files cause immediate failure (`FileNotFoundError`).
 - Output branch naming is fixed as `<base><suffix>_<variation>`.

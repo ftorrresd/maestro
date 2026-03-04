@@ -26,8 +26,15 @@
   "energy_corrections": [
     {
       "method": "scale_pt_mass",
-      "pt_branch": "Muon_pt",
-      "mass_branch": "Muon_mass",
+      "input_branches": [
+        "Muon_pt",
+        "Muon_mass",
+        "Muon_eta"
+      ],
+      "corrected_branches": [
+        "Muon_pt",
+        "Muon_mass"
+      ],
       "suffix": "_calib",
       "variations": [
         "nominal",
@@ -41,6 +48,10 @@
   "event_weight_corrections": [
     {
       "method": "event_weight_sf",
+      "input_branches": [
+        "genWeight",
+        "PV_npvs"
+      ],
       "weight_branch": "genWeight",
       "suffix": "_sf",
       "variations": [
