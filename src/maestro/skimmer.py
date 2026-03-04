@@ -5,11 +5,17 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Union, cast
 
 import awkward as ak
+import correctionlib
 import numpy as np
 import uproot
 
 from .chunking import StepSize, compute_entry_range, normalize_step_size
-from .config import SkimConfig, coerce_config
+from .config import (
+    EnergyCorrectionConfig,
+    EventWeightCorrectionConfig,
+    SkimConfig,
+    coerce_config,
+)
 from .report import build_report
 
 
@@ -48,6 +54,109 @@ def _build_keep_branches(
     return keep_branches
 
 
+def _build_corrected_branch_name(
+    *,
+    base_branch: str,
+    suffix: str,
+    variation: str,
+) -> str:
+    return f"{base_branch}{suffix}_{variation}"
+
+
+def _apply_energy_correction_mock(
+    *,
+    pt: ak.Array,
+    mass: ak.Array,
+    correction_cfg: EnergyCorrectionConfig,
+    variation: str,
+    correction_set: Optional[Any],
+) -> tuple[ak.Array, ak.Array]:
+    _ = correction_cfg
+    _ = variation
+    _ = correction_set
+    return pt, mass
+
+
+def _apply_event_weight_scale_factor_mock(
+    *,
+    weight: ak.Array,
+    correction_cfg: EventWeightCorrectionConfig,
+    variation: str,
+    correction_set: Optional[Any],
+) -> ak.Array:
+    _ = correction_cfg
+    _ = variation
+    _ = correction_set
+    return weight
+
+
+ENERGY_CORRECTION_METHODS = {
+    "scale_pt_mass": _apply_energy_correction_mock,
+}
+
+
+EVENT_WEIGHT_CORRECTION_METHODS = {
+    "event_weight_sf": _apply_event_weight_scale_factor_mock,
+}
+
+
+def _load_correctionlib_sets(correctionlib_files: list[str]) -> dict[str, Any]:
+    loaded: dict[str, Any] = {}
+    for file_path in correctionlib_files:
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Correctionlib file not found: {path}")
+        cset = correctionlib.CorrectionSet.from_file(str(path))
+        loaded[str(path)] = cset
+        loaded[str(path.resolve())] = cset
+    return loaded
+
+
+def _resolve_correction_set(
+    *,
+    correction_file: Optional[str],
+    correctionlib_sets: Mapping[str, Any],
+) -> Optional[Any]:
+    if correction_file is None:
+        return None
+    path = Path(correction_file)
+    if correction_file in correctionlib_sets:
+        return correctionlib_sets[correction_file]
+    resolved_key = str(path.resolve())
+    if resolved_key in correctionlib_sets:
+        return correctionlib_sets[resolved_key]
+    raise RuntimeError(
+        "Configured correction_file is not loaded via 'correctionlib_files': "
+        f"{correction_file}"
+    )
+
+
+def _require_correction_inputs(
+    *,
+    all_branches: set[str],
+    energy_corrections: list[EnergyCorrectionConfig],
+    event_weight_corrections: list[EventWeightCorrectionConfig],
+) -> None:
+    for correction in energy_corrections:
+        if correction.pt_branch not in all_branches:
+            raise RuntimeError(
+                "Missing correction input branch: "
+                f"{correction.pt_branch} (energy correction pt_branch)"
+            )
+        if correction.mass_branch not in all_branches:
+            raise RuntimeError(
+                "Missing correction input branch: "
+                f"{correction.mass_branch} (energy correction mass_branch)"
+            )
+    for event_weight_correction in event_weight_corrections:
+        if event_weight_correction.weight_branch not in all_branches:
+            raise RuntimeError(
+                "Missing correction input branch: "
+                f"{event_weight_correction.weight_branch} "
+                "(event_weight_correction.weight_branch)"
+            )
+
+
 def skim_file(
     *,
     input_path: Path,
@@ -61,6 +170,7 @@ def skim_file(
 
     validated = coerce_config(config)
     report_path = output_path.with_suffix(output_path.suffix + ".report.json")
+    correctionlib_sets = _load_correctionlib_sets(validated.correctionlib_files)
 
     with uproot.open(input_path) as source:
         if tree_name not in source:
@@ -75,6 +185,15 @@ def skim_file(
         )
 
         all_branches = set(tree.keys())
+        energy_corrections = list(validated.energy_corrections)
+        event_weight_corrections = list(validated.event_weight_corrections)
+        if validated.event_weight_correction is not None:
+            event_weight_corrections.append(validated.event_weight_correction)
+        _require_correction_inputs(
+            all_branches=all_branches,
+            energy_corrections=energy_corrections,
+            event_weight_corrections=event_weight_corrections,
+        )
         requested_triggers = list(validated.triggers)
         active_triggers = [
             trigger for trigger in requested_triggers if trigger in all_branches
@@ -100,6 +219,11 @@ def skim_file(
         filter_branches = {branch for branch in keep_branches if branch in all_branches}
         filter_branches.update(active_triggers)
         filter_branches.update(active_object_branches)
+        for correction in energy_corrections:
+            filter_branches.add(correction.pt_branch)
+            filter_branches.add(correction.mass_branch)
+        for event_weight_correction in event_weight_corrections:
+            filter_branches.add(event_weight_correction.weight_branch)
 
         selected_chunks: list[dict[str, ak.Array]] = []
         empty_template: Optional[dict[str, ak.Array]] = None
@@ -110,6 +234,7 @@ def skim_file(
         for branch in active_object_branches:
             cutflow_labels.append(f"pass_{branch}_ge_{object_requirements[branch]}")
         cutflow_counts = np.zeros(len(cutflow_labels), dtype=np.int64)
+        corrected_output_branches: list[str] = []
 
         n_scanned = 0
         n_selected = 0
@@ -173,13 +298,79 @@ def skim_file(
                         f"Branch '{branch}' unavailable while writing selected chunk."
                     )
 
+            for correction in energy_corrections:
+                energy_handler = ENERGY_CORRECTION_METHODS.get(correction.method)
+                if energy_handler is None:
+                    raise RuntimeError(
+                        f"Unknown energy correction method: {correction.method}"
+                    )
+                correction_set = _resolve_correction_set(
+                    correction_file=correction.correction_file,
+                    correctionlib_sets=correctionlib_sets,
+                )
+                for variation in correction.variations:
+                    corrected_pt, corrected_mass = energy_handler(
+                        pt=arrays[correction.pt_branch][cumulative_mask],
+                        mass=arrays[correction.mass_branch][cumulative_mask],
+                        correction_cfg=correction,
+                        variation=variation,
+                        correction_set=correction_set,
+                    )
+                    pt_name = _build_corrected_branch_name(
+                        base_branch=correction.pt_branch,
+                        suffix=correction.suffix,
+                        variation=variation,
+                    )
+                    mass_name = _build_corrected_branch_name(
+                        base_branch=correction.mass_branch,
+                        suffix=correction.suffix,
+                        variation=variation,
+                    )
+                    chunk_selected[pt_name] = corrected_pt
+                    chunk_selected[mass_name] = corrected_mass
+                    if pt_name not in corrected_output_branches:
+                        corrected_output_branches.append(pt_name)
+                    if mass_name not in corrected_output_branches:
+                        corrected_output_branches.append(mass_name)
+
+            for event_weight_correction in event_weight_corrections:
+                event_handler = EVENT_WEIGHT_CORRECTION_METHODS.get(
+                    event_weight_correction.method
+                )
+                if event_handler is None:
+                    raise RuntimeError(
+                        "Unknown event weight correction method: "
+                        f"{event_weight_correction.method}"
+                    )
+                correction_set = _resolve_correction_set(
+                    correction_file=event_weight_correction.correction_file,
+                    correctionlib_sets=correctionlib_sets,
+                )
+                for variation in event_weight_correction.variations:
+                    corrected_weight = event_handler(
+                        weight=arrays[event_weight_correction.weight_branch][
+                            cumulative_mask
+                        ],
+                        correction_cfg=event_weight_correction,
+                        variation=variation,
+                        correction_set=correction_set,
+                    )
+                    weight_name = _build_corrected_branch_name(
+                        base_branch=event_weight_correction.weight_branch,
+                        suffix=event_weight_correction.suffix,
+                        variation=variation,
+                    )
+                    chunk_selected[weight_name] = corrected_weight
+                    if weight_name not in corrected_output_branches:
+                        corrected_output_branches.append(weight_name)
+
             n_selected += selected_count
             selected_chunks.append(chunk_selected)
 
         if selected_chunks:
             skimmed = {
                 branch: ak.concatenate([chunk[branch] for chunk in selected_chunks])
-                for branch in keep_branches
+                for branch in selected_chunks[0]
             }
         else:
             skimmed = empty_template if empty_template is not None else {}
@@ -213,6 +404,20 @@ def skim_file(
         cutflow_labels=cutflow_labels,
         cutflow_counts=[int(value) for value in cutflow_counts],
         kept_branches=keep_branches,
+        corrections={
+            "energy_corrections": [item.model_dump() for item in energy_corrections],
+            "event_weight_correction": (
+                event_weight_corrections[0].model_dump()
+                if len(event_weight_corrections) == 1
+                else None
+            ),
+            "event_weight_corrections": [
+                item.model_dump() for item in event_weight_corrections
+            ],
+            "correctionlib_files": validated.correctionlib_files,
+            "output_branches": corrected_output_branches,
+            "mock_mode": True,
+        },
     )
 
     with report_path.open("w", encoding="utf-8") as handle:

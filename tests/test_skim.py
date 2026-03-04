@@ -14,6 +14,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from skim import _load_config, main, run_from_config, skim_file
 
 
+def _make_correctionlib_file(path: Path) -> None:
+    payload = {
+        "schema_version": 2,
+        "corrections": [],
+        "compound_corrections": [],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def _make_input_file(path: Path) -> None:
     events: dict[str, Any] = {
         "run": np.array([1, 1, 1, 1, 1, 1], dtype=np.int32),
@@ -29,9 +38,16 @@ def _make_input_file(path: Path) -> None:
         ),
         "nMuon": np.array([1, 0, 2, 1, 0, 3], dtype=np.int32),
         "nJet": np.array([2, 2, 1, 3, 0, 2], dtype=np.int32),
+        "genWeight": np.array([1.0, -1.0, 2.0, 0.5, -0.2, 1.2], dtype=np.float64),
         "Muon_pt": ak.Array([[26.0], [], [28.0, 12.0], [30.0], [], [45.0, 23.0, 10.0]]),
+        "Muon_mass": ak.Array(
+            [[0.105], [], [0.105, 0.105], [0.105], [], [0.105, 0.105, 0.105]]
+        ),
         "Jet_pt": ak.Array(
             [[40.0, 32.0], [50.0, 44.0], [33.0], [60.0, 45.0, 30.0], [], [52.0, 41.0]]
+        ),
+        "Jet_mass": ak.Array(
+            [[10.0, 8.0], [9.0, 7.0], [6.0], [12.0, 10.0, 8.0], [], [11.0, 9.0]]
         ),
     }
     with uproot.recreate(path) as fout:
@@ -59,6 +75,7 @@ def _base_config() -> dict[str, Any]:
             "event",
             "nMuon",
             "nJet",
+            "genWeight",
             "HLT_IsoMu24",
             "HLT_Ele32_WPTight_Gsf",
         ],
@@ -135,6 +152,47 @@ def test_load_config_requires_k_factor(tmp_path: Path) -> None:
         assert "k_factor" in str(exc)
     else:
         raise AssertionError("Expected ValueError for missing k_factor")
+
+
+def test_load_config_accepts_correctionlib_files(tmp_path: Path) -> None:
+    cset_path = tmp_path / "corr.json"
+    _make_correctionlib_file(cset_path)
+    config_path = tmp_path / "cfg_with_cset.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "input": "input.root",
+                "output": "output.root",
+                "sample_metadata": {"k_factor": 1.0},
+                "correctionlib_files": [str(cset_path)],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = _load_config(config_path)
+    assert config.correctionlib_files == [str(cset_path)]
+
+
+def test_load_config_accepts_multiple_event_weight_corrections(tmp_path: Path) -> None:
+    config_path = tmp_path / "cfg_event_weight_corrections.json"
+    config = _base_config()
+    config["event_weight_corrections"] = [
+        {
+            "weight_branch": "genWeight",
+            "suffix": "_sfA",
+            "variations": ["nominal", "varA"],
+        },
+        {
+            "weight_branch": "genWeight",
+            "suffix": "_sfB",
+            "variations": ["nominal", "varB"],
+        },
+    ]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    loaded = _load_config(config_path)
+    assert len(loaded.event_weight_corrections) == 2
 
 
 def test_skim_file_selection_and_cutflow(tmp_path: Path) -> None:
@@ -268,6 +326,340 @@ def test_missing_non_trigger_keep_branch_is_dropped(tmp_path: Path) -> None:
         keys = tree.keys()
         assert "event" in keys
         assert "Branch_DoesNotExist" not in keys
+
+
+def test_corrections_append_pt_mass_and_event_weight_variations(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    _make_input_file(input_path)
+
+    config = _base_config()
+    config["energy_corrections"] = [
+        {
+            "pt_branch": "Muon_pt",
+            "mass_branch": "Muon_mass",
+            "suffix": "_calib",
+            "variations": ["nominal", "jerA", "jerB"],
+        }
+    ]
+    config["event_weight_correction"] = {
+        "weight_branch": "genWeight",
+        "suffix": "_sf",
+        "variations": ["nominal", "pileupUp"],
+    }
+    config["keep_branches"] = [
+        "event",
+        "Muon_pt",
+        "Muon_mass",
+        "genWeight",
+        "HLT_IsoMu24",
+        "HLT_Ele32_WPTight_Gsf",
+        "nMuon",
+        "nJet",
+    ]
+
+    report = skim_file(
+        input_path=input_path,
+        config=config,
+        output_path=output_path,
+    )
+
+    expected_branches = {
+        "Muon_pt_calib_nominal",
+        "Muon_mass_calib_nominal",
+        "Muon_pt_calib_jerA",
+        "Muon_mass_calib_jerA",
+        "Muon_pt_calib_jerB",
+        "Muon_mass_calib_jerB",
+        "genWeight_sf_nominal",
+        "genWeight_sf_pileupUp",
+    }
+
+    assert expected_branches.issubset(set(report["corrections"]["output_branches"]))
+
+    with uproot.open(output_path) as fin:
+        tree = fin["Events"]
+        keys = set(tree.keys())
+        assert expected_branches.issubset(keys)
+
+        arrays = tree.arrays(
+            [
+                "Muon_pt",
+                "Muon_pt_calib_nominal",
+                "Muon_pt_calib_jerA",
+                "Muon_mass",
+                "Muon_mass_calib_nominal",
+                "genWeight",
+                "genWeight_sf_nominal",
+                "genWeight_sf_pileupUp",
+            ],
+            library="ak",
+        )
+        assert ak.to_list(arrays["Muon_pt_calib_nominal"]) == ak.to_list(
+            arrays["Muon_pt"]
+        )
+        assert ak.to_list(arrays["Muon_pt_calib_jerA"]) == ak.to_list(arrays["Muon_pt"])
+        assert ak.to_list(arrays["Muon_mass_calib_nominal"]) == ak.to_list(
+            arrays["Muon_mass"]
+        )
+        assert ak.to_list(arrays["genWeight_sf_nominal"]) == ak.to_list(
+            arrays["genWeight"]
+        )
+        assert ak.to_list(arrays["genWeight_sf_pileupUp"]) == ak.to_list(
+            arrays["genWeight"]
+        )
+
+    assert report["corrections"]["mock_mode"] is True
+    assert report["corrections"]["event_weight_correction"]["suffix"] == "_sf"
+
+
+def test_load_config_rejects_empty_correction_variations(tmp_path: Path) -> None:
+    config_path = tmp_path / "bad_empty_variations.json"
+    config = _base_config()
+    config["energy_corrections"] = [
+        {
+            "pt_branch": "Muon_pt",
+            "mass_branch": "Muon_mass",
+            "suffix": "_calib",
+            "variations": [],
+        }
+    ]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    try:
+        _load_config(config_path)
+    except ValueError as exc:
+        assert "variations" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for empty correction variations")
+
+
+def test_missing_correction_input_branch_raises_runtime_error(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    _make_input_file(input_path)
+
+    config = _base_config()
+    config["energy_corrections"] = [
+        {
+            "pt_branch": "Muon_pt",
+            "mass_branch": "Muon_mass_missing",
+            "suffix": "_calib",
+            "variations": ["nominal"],
+        }
+    ]
+
+    try:
+        skim_file(
+            input_path=input_path,
+            config=config,
+            output_path=output_path,
+        )
+    except RuntimeError as exc:
+        assert "Missing correction input branch" in str(exc)
+        assert "Muon_mass_missing" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError for missing correction input")
+
+
+def test_missing_event_weight_input_branch_raises_runtime_error(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    _make_input_file(input_path)
+
+    config = _base_config()
+    config["event_weight_correction"] = {
+        "weight_branch": "genWeightMissing",
+        "suffix": "_sf",
+        "variations": ["nominal", "altA"],
+    }
+
+    try:
+        skim_file(
+            input_path=input_path,
+            config=config,
+            output_path=output_path,
+        )
+    except RuntimeError as exc:
+        assert "Missing correction input branch" in str(exc)
+        assert "genWeightMissing" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError for missing event weight input")
+
+
+def test_missing_correctionlib_file_raises_file_not_found(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    _make_input_file(input_path)
+
+    config = _base_config()
+    config["correctionlib_files"] = [str(tmp_path / "does_not_exist.json")]
+
+    try:
+        skim_file(
+            input_path=input_path,
+            config=config,
+            output_path=output_path,
+        )
+    except FileNotFoundError as exc:
+        assert "Correctionlib file not found" in str(exc)
+    else:
+        raise AssertionError(
+            "Expected FileNotFoundError for missing correctionlib file"
+        )
+
+
+def test_correctionlib_files_are_reported(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    cset_path = tmp_path / "corr.json"
+    _make_input_file(input_path)
+    _make_correctionlib_file(cset_path)
+
+    config = _base_config()
+    config["correctionlib_files"] = [str(cset_path)]
+
+    report = skim_file(
+        input_path=input_path,
+        config=config,
+        output_path=output_path,
+    )
+
+    assert report["corrections"]["correctionlib_files"] == [str(cset_path)]
+
+
+def test_multiple_corrections_for_different_objects(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    cset_path = tmp_path / "corr.json"
+    _make_input_file(input_path)
+    _make_correctionlib_file(cset_path)
+
+    config = _base_config()
+    config["correctionlib_files"] = [str(cset_path)]
+    config["energy_corrections"] = [
+        {
+            "method": "scale_pt_mass",
+            "pt_branch": "Muon_pt",
+            "mass_branch": "Muon_mass",
+            "suffix": "_muCalib",
+            "variations": ["nominal", "muVarA"],
+            "correction_file": str(cset_path),
+            "correction_name": "muon_scale",
+            "inputs": {"pt": "Muon_pt"},
+        },
+        {
+            "method": "scale_pt_mass",
+            "pt_branch": "Jet_pt",
+            "mass_branch": "Jet_mass",
+            "suffix": "_jetCalib",
+            "variations": ["nominal", "jetVarA"],
+            "correction_file": str(cset_path),
+            "correction_name": "jet_scale",
+            "inputs": {"pt": "Jet_pt"},
+        },
+    ]
+    config["event_weight_corrections"] = [
+        {
+            "method": "event_weight_sf",
+            "weight_branch": "genWeight",
+            "suffix": "_sfA",
+            "variations": ["nominal", "sfVarA"],
+            "correction_file": str(cset_path),
+            "correction_name": "pu_sf",
+            "inputs": {"nPU": "PV_npvs"},
+        },
+        {
+            "method": "event_weight_sf",
+            "weight_branch": "genWeight",
+            "suffix": "_sfB",
+            "variations": ["nominal", "sfVarB"],
+            "correction_file": str(cset_path),
+            "correction_name": "btag_sf",
+            "inputs": {"ht": "nJet"},
+        },
+    ]
+    config["keep_branches"] = [
+        "event",
+        "Muon_pt",
+        "Muon_mass",
+        "Jet_pt",
+        "Jet_mass",
+        "genWeight",
+        "HLT_IsoMu24",
+        "HLT_Ele32_WPTight_Gsf",
+        "nMuon",
+        "nJet",
+    ]
+
+    report = skim_file(
+        input_path=input_path,
+        config=config,
+        output_path=output_path,
+    )
+
+    assert "Muon_pt_muCalib_muVarA" in report["corrections"]["output_branches"]
+    assert "Jet_mass_jetCalib_jetVarA" in report["corrections"]["output_branches"]
+    assert "genWeight_sfA_sfVarA" in report["corrections"]["output_branches"]
+    assert "genWeight_sfB_sfVarB" in report["corrections"]["output_branches"]
+    assert len(report["corrections"]["event_weight_corrections"]) == 2
+
+
+def test_unknown_correction_method_raises_runtime_error(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    _make_input_file(input_path)
+
+    config = _base_config()
+    config["energy_corrections"] = [
+        {
+            "method": "unknown_method",
+            "pt_branch": "Muon_pt",
+            "mass_branch": "Muon_mass",
+            "suffix": "_x",
+            "variations": ["nominal"],
+        }
+    ]
+
+    try:
+        skim_file(
+            input_path=input_path,
+            config=config,
+            output_path=output_path,
+        )
+    except RuntimeError as exc:
+        assert "Unknown energy correction method" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError for unknown correction method")
+
+
+def test_correction_file_not_loaded_raises_runtime_error(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.root"
+    output_path = tmp_path / "skim.root"
+    _make_input_file(input_path)
+
+    config = _base_config()
+    config["energy_corrections"] = [
+        {
+            "method": "scale_pt_mass",
+            "pt_branch": "Muon_pt",
+            "mass_branch": "Muon_mass",
+            "suffix": "_x",
+            "variations": ["nominal"],
+            "correction_file": "/tmp/not_loaded.json",
+        }
+    ]
+
+    try:
+        skim_file(
+            input_path=input_path,
+            config=config,
+            output_path=output_path,
+        )
+    except RuntimeError as exc:
+        assert "correction_file is not loaded" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError for unloaded correction_file")
 
 
 def test_main_writes_report_json(tmp_path: Path) -> None:

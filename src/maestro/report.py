@@ -24,6 +24,7 @@ def build_report(
     cutflow_labels: list[str],
     cutflow_counts: list[int],
     kept_branches: list[str],
+    corrections: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "input_file": input_file,
@@ -57,4 +58,5 @@ def build_report(
             "counts": cutflow_counts,
         },
         "kept_branches": kept_branches,
+        "corrections": corrections,
     }

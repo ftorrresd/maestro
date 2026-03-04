@@ -102,6 +102,14 @@ report = run_from_config(
 - `input` and `output` are required in the config.
 - `sample_metadata.k_factor` is required and must be > 0.
 - `tree` defaults to `Events` and `step_size` defaults to `100 MB`.
+- `correctionlib_files` is an optional list of correctionlib JSON files to load.
+- `energy_corrections` allows mocked object-energy corrections for pT and mass.
+- `event_weight_correction` supports one mocked event-wise scale factor block.
+- `event_weight_corrections` supports multiple event-wise scale factor blocks.
+- Correction output branch names are `<input_branch><suffix>_<variation>`.
+- Variations are user-defined strings (not limited to up/down).
+- If a configured correction input branch is missing, execution fails immediately.
+- If a configured correctionlib file is missing, execution fails immediately.
 - Missing trigger/object branches are reported in the JSON report.
 - Missing trigger branches are treated as always `False` in the trigger OR.
 - Configured missing trigger branches are written to the skim output as boolean
@@ -110,6 +118,106 @@ report = run_from_config(
 - The output ROOT file contains a 1D histogram named `cutflow` with cumulative event
   counts after each selection stage. Bin labels are stored in the report JSON.
 - The report JSON includes `input_config` with the fully validated input configuration.
+
+### Correction config example
+
+```json
+{
+  "correctionlib_files": ["/path/to/corrections.json"],
+  "energy_corrections": [
+    {
+      "pt_branch": "Muon_pt",
+      "mass_branch": "Muon_mass",
+      "suffix": "_calib",
+      "variations": ["nominal", "jerA", "jerB"]
+    }
+  ],
+  "event_weight_correction": {
+    "weight_branch": "genWeight",
+    "suffix": "_sf",
+    "variations": ["nominal", "pileupUp"]
+  }
+}
+```
+
+### Multiple corrections example
+
+```json
+{
+  "correctionlib_files": ["/path/to/corrections.json"],
+  "energy_corrections": [
+    {
+      "method": "scale_pt_mass",
+      "pt_branch": "Muon_pt",
+      "mass_branch": "Muon_mass",
+      "suffix": "_muCalib",
+      "variations": ["nominal", "muVarA"],
+      "correction_file": "/path/to/corrections.json",
+      "correction_name": "muon_scale"
+    },
+    {
+      "method": "scale_pt_mass",
+      "pt_branch": "Jet_pt",
+      "mass_branch": "Jet_mass",
+      "suffix": "_jetCalib",
+      "variations": ["nominal", "jetVarA"],
+      "correction_file": "/path/to/corrections.json",
+      "correction_name": "jet_scale"
+    }
+  ],
+  "event_weight_corrections": [
+    {
+      "method": "event_weight_sf",
+      "weight_branch": "genWeight",
+      "suffix": "_sfA",
+      "variations": ["nominal", "sfVarA"],
+      "correction_file": "/path/to/corrections.json",
+      "correction_name": "pu_sf"
+    },
+    {
+      "method": "event_weight_sf",
+      "weight_branch": "genWeight",
+      "suffix": "_sfB",
+      "variations": ["nominal", "sfVarB"],
+      "correction_file": "/path/to/corrections.json",
+      "correction_name": "btag_sf"
+    }
+  ]
+}
+```
+
+Current implementation uses mock correction functions (pass-through), so values
+are unchanged until you replace the mock functions in `src/maestro/skimmer.py`.
+
+### Implementing real corrections
+
+Replace the mock hooks in `src/maestro/skimmer.py`:
+
+- `_apply_energy_correction_mock(...)`
+- `_apply_event_weight_scale_factor_mock(...)`
+
+Recommended handling for object energy corrections:
+
+- Use `variation` to switch correction scenario (for example `nominal`, `jerA`,
+  `jesAbsolute`, custom analysis names).
+- Return corrected pT and mass with the same event/object structure as input.
+- Keep output jagged dimensions identical to the source object branches.
+- Keep behavior deterministic for reproducibility.
+
+Recommended handling for event-wise scale factors:
+
+- Read event-level weight from `event_weight_correction.weight_branch`.
+- Apply multiplicative scale factors per event for each configured variation.
+- Return one value per selected event, preserving event order.
+
+Runtime contract:
+
+- All configured `correctionlib_files` are loaded at startup.
+- Missing correction input branches cause immediate failure (`RuntimeError`).
+- Missing correctionlib files cause immediate failure (`FileNotFoundError`).
+- Output branch naming is fixed as `<base><suffix>_<variation>`.
+- All configured variations are materialized in the output tree and listed in the
+  report `corrections.output_branches` section.
 
 ## Validation
 

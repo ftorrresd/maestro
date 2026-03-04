@@ -20,6 +20,37 @@
     "nMuon": 1,
     "nJet": 2
   },
+  "correctionlib_files": [
+    "/path/to/corrections.json"
+  ],
+  "energy_corrections": [
+    {
+      "method": "scale_pt_mass",
+      "pt_branch": "Muon_pt",
+      "mass_branch": "Muon_mass",
+      "suffix": "_calib",
+      "variations": [
+        "nominal",
+        "jerA",
+        "jerB"
+      ],
+      "correction_file": "/path/to/corrections.json",
+      "correction_name": "muon_scale"
+    }
+  ],
+  "event_weight_corrections": [
+    {
+      "method": "event_weight_sf",
+      "weight_branch": "genWeight",
+      "suffix": "_sf",
+      "variations": [
+        "nominal",
+        "pileupUp"
+      ],
+      "correction_file": "/path/to/corrections.json",
+      "correction_name": "pileup_sf"
+    }
+  ],
   "keep_branches": [
     "run",
     "luminosityBlock",

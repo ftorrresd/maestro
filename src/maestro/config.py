@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Mapping, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -22,6 +22,91 @@ class SampleMetadata(BaseModel):
         return value
 
 
+class EnergyCorrectionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: str = "scale_pt_mass"
+    pt_branch: str
+    mass_branch: str
+    suffix: str = "_corr"
+    variations: list[str] = Field(default_factory=lambda: ["nominal"])
+    correction_file: Optional[str] = None
+    correction_name: Optional[str] = None
+    inputs: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("method", "pt_branch", "mass_branch", "suffix")
+    @classmethod
+    def _validate_non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("correction fields must not be empty strings.")
+        return stripped
+
+    @field_validator("correction_file", "correction_name")
+    @classmethod
+    def _validate_optional_non_empty(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("optional correction fields must not be empty strings.")
+        return stripped
+
+    @field_validator("variations")
+    @classmethod
+    def _validate_variations(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("'variations' must contain at least one variation.")
+        cleaned = [item.strip() for item in value]
+        if any(not item for item in cleaned):
+            raise ValueError("'variations' entries must not be empty.")
+        return cleaned
+
+
+class EventWeightCorrectionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: str = "event_weight_sf"
+    weight_branch: str
+    suffix: str = "_sf"
+    variations: list[str] = Field(default_factory=lambda: ["nominal"])
+    correction_file: Optional[str] = None
+    correction_name: Optional[str] = None
+    inputs: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("method", "weight_branch", "suffix")
+    @classmethod
+    def _validate_non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError(
+                "event-weight correction fields must not be empty strings."
+            )
+        return stripped
+
+    @field_validator("correction_file", "correction_name")
+    @classmethod
+    def _validate_optional_non_empty(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError(
+                "optional event-weight correction fields must not be empty strings."
+            )
+        return stripped
+
+    @field_validator("variations")
+    @classmethod
+    def _validate_variations(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("'variations' must contain at least one variation.")
+        cleaned = [item.strip() for item in value]
+        if any(not item for item in cleaned):
+            raise ValueError("'variations' entries must not be empty.")
+        return cleaned
+
+
 class SkimConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -35,6 +120,12 @@ class SkimConfig(BaseModel):
     triggers: list[str] = Field(default_factory=list)
     object_requirements: dict[str, int] = Field(default_factory=dict)
     keep_branches: list[str] = Field(default_factory=list)
+    correctionlib_files: list[str] = Field(default_factory=list)
+    energy_corrections: list[EnergyCorrectionConfig] = Field(default_factory=list)
+    event_weight_correction: Optional[EventWeightCorrectionConfig] = None
+    event_weight_corrections: list[EventWeightCorrectionConfig] = Field(
+        default_factory=list
+    )
 
     @field_validator("n_events")
     @classmethod
@@ -82,6 +173,14 @@ class SkimConfig(BaseModel):
             if min_count < 0:
                 raise ValueError(f"'object_requirements.{branch_name}' must be >= 0.")
         return value
+
+    @field_validator("correctionlib_files")
+    @classmethod
+    def _validate_correctionlib_files(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if any(not item for item in cleaned):
+            raise ValueError("'correctionlib_files' entries must not be empty.")
+        return cleaned
 
 
 def validate_config_object(raw_config: Any) -> SkimConfig:
